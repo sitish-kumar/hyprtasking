@@ -284,6 +284,8 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
         }
 
         if (swipe_state == HT_SWIPE_MOVE) {
+            res = true;  // consume from the very first update so a native
+                         // workspace-swipe can't also fire and snap us
             cursor_view->layout->on_move_swipe(e.delta);
         }
     }

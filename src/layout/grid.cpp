@@ -326,6 +326,11 @@ void HTLayoutGrid::init_position() {
     if (it == overview_layout.end() || it->second.box.empty())
         return;
 
+    // Kill any in-flight on_move settle animation (and its navigating=false
+    // callback) before seeding the start offset. Otherwise a second move swipe
+    // begun mid-animation fights the previous switch's offset goal and snaps
+    // instead of tracking the finger.
+    offset->resetAllCallbacks();
     offset->setValueAndWarp(-it->second.box.pos());
     scale->setValueAndWarp(1.f);
 }
