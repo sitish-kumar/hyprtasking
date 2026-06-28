@@ -436,6 +436,7 @@ void HTLayoutGrid::render() {
     auto* const INACTIVECOL = (Config::CGradientValueData*)(PINACTIVECOL.ptr());
 
     const float BORDERSIZE = HTConfig::value<Config::FLOAT>("border_size");
+    const int   ROUNDING   = static_cast<int>(HTConfig::value<Config::INTEGER>("rounding") * monitor->m_scale);
     const auto time = Time::steadyNow();
 
     CBox monitor_box = {{0, 0}, monitor->m_transformedSize};
@@ -476,6 +477,7 @@ void HTLayoutGrid::render() {
         bdata.box = ws_layout.box;
         bdata.grad1 = start_workspace->m_id == ws_id ? *ACTIVECOL : *INACTIVECOL;
         bdata.borderSize = BORDERSIZE;
+        bdata.round = ROUNDING;
         g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(bdata));
     }
 
@@ -491,6 +493,35 @@ void HTLayoutGrid::render() {
     if (const auto it = overview_layout.find(start_workspace->m_id);
         it != overview_layout.end() && tile_visible(it->second.box))
         render_workspace_at_box(monitor, start_workspace, time, it->second.box);
+
+    // Draw a "+" on cells whose numbered workspace doesn't exist yet, so empty
+    // cells read as "create/switch here". (#8)
+    if (HTConfig::value<Config::INTEGER>("plus_on_empty")) {
+        const CHyprColor plus_col {1.f, 1.f, 1.f, 0.22f};
+        for (const auto& [ws_id, ws_layout] : overview_layout) {
+            if (!tile_visible(ws_layout.box))
+                continue;
+            if (g_pCompositor->getWorkspaceByID(ws_id) != nullptr)
+                continue;  // real workspace -> no plus
+            const CBox&  b     = ws_layout.box;
+            const double arm   = std::min(b.width, b.height) * 0.09;
+            const double thick = std::max(2.0, arm * 0.28);
+            const double cx    = b.x + b.width / 2.0;
+            const double cy    = b.y + b.height / 2.0;
+
+            CRectPassElement::SRectData hbar;
+            hbar.color = plus_col;
+            hbar.box   = CBox {cx - arm, cy - thick / 2.0, arm * 2.0, thick};
+            hbar.round = static_cast<int>(thick / 2.0);
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(hbar));
+
+            CRectPassElement::SRectData vbar;
+            vbar.color = plus_col;
+            vbar.box   = CBox {cx - thick / 2.0, cy - arm, thick, arm * 2.0};
+            vbar.round = static_cast<int>(thick / 2.0);
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(vbar));
+        }
+    }
 
     monitor->m_activeWorkspace = start_workspace;
     g_pDesktopAnimationManager->startAnimation(
