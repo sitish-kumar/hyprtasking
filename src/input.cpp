@@ -6,6 +6,7 @@
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/managers/PointerManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 
 #include "config.hpp"
 #include "manager.hpp"
@@ -194,7 +195,22 @@ bool HTManager::exit_to_workspace() {
 }
 
 bool HTManager::on_mouse_move() {
-    return false;
+    // Focus-follows-cursor (#3): while the overview is open, focus the window
+    // under the cursor so it reads as active and a later close lands on it.
+    if (!HTConfig::value<Config::INTEGER>("focus_follows_cursor"))
+        return false;
+
+    const PHTVIEW cursor_view = get_view_from_cursor();
+    if (cursor_view == nullptr || !cursor_view->active || cursor_view->closing)
+        return false;
+    if (!cursor_view->layout->should_manage_mouse())
+        return false;
+
+    const PHLWINDOW hovered = get_window_from_cursor(false);
+    if (hovered != nullptr && hovered != Desktop::focusState()->window())
+        Desktop::focusState()->fullWindowFocus(hovered, Desktop::FOCUS_REASON_FFM);
+
+    return false;  // never cancel the motion event
 }
 
 bool HTManager::on_mouse_axis(double delta) {
