@@ -24,6 +24,7 @@
 
 #include "../config.hpp"
 #include "../globals.hpp"
+#include "../grid_dims.hpp"
 #include "../overview.hpp"
 #include "../render.hpp"
 #include "../types.hpp"
@@ -89,12 +90,9 @@ void HTLayoutGrid::refresh_grid_dims() {
         n++;
     }
 
-    // Reserve one extra slot so there is always at least one empty cell to
-    // create/drag a new workspace into. Size a compact (near-square) grid that
-    // fits n+1: e.g. 4ws -> 3x2, 9ws -> 4x3, 16ws -> 5x4.
-    const int slots = std::max(n + 1, 2);
-    m_grid_cols = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(slots))));
-    m_grid_rows = static_cast<int>(std::ceil(static_cast<double>(slots) / m_grid_cols));
+    // Compact near-square grid that fits n+1 (one spare cell). Pure helper is
+    // unit-tested in test/grid_dims_test.cpp.
+    grid_dims_for_count(n, m_grid_rows, m_grid_cols);
 }
 
 void HTLayoutGrid::get_grid_dims(int& rows, int& cols) {

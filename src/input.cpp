@@ -243,6 +243,7 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
             if (swipe_direction != 'v' || cursor_view->closing) {
                 return res;
             } else if (!cursor_view->active && deltaY <= 0) {
+                refresh_all_grid_caches();  // recompute (adaptive) dims+slots before opening
                 cursor_view->show();
                 swipe_state = HT_SWIPE_OPEN;
                 swipe_amt = OPEN_DISTANCE;

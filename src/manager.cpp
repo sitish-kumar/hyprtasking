@@ -91,6 +91,7 @@ PHLWINDOW HTManager::get_window_from_cursor(bool return_focused) {
 }
 
 void HTManager::show_all_views() {
+    refresh_all_grid_caches();  // recompute (adaptive) dims + slots before showing
     for (PHTVIEW view : views) {
         if (view == nullptr)
             continue;
@@ -107,6 +108,7 @@ void HTManager::hide_all_views() {
 }
 
 void HTManager::show_cursor_view() {
+    refresh_all_grid_caches();  // recompute (adaptive) dims + slots before showing
     const PHTVIEW view = get_view_from_cursor();
     if (view != nullptr)
         view->show();
