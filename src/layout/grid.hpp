@@ -48,6 +48,9 @@ class HTLayoutGrid: public HTLayoutBase {
     virtual void render();
 
     void get_grid_dims(int& rows, int& cols);
+    void refresh_grid_dims();
+    int m_grid_rows = 3;
+    int m_grid_cols = 3;
     void refresh_workspace_cache(const std::unordered_set<WORKSPACEID>& extra_off_limits = {});
     WORKSPACEID slot_workspace(int layer, int x, int y);
 

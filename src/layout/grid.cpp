@@ -68,10 +68,15 @@ WORKSPACEID HTLayoutGrid::slot_workspace(int layer, int x, int y) {
 // (n=9 -> 3x3, n=10..16 -> 4x4, ...). Otherwise the static grid:rows/grid:cols
 // config values are used. All callers go through this so rendering, navigation
 // and slot assignment always agree on the dimensions.
-void HTLayoutGrid::get_grid_dims(int& rows, int& cols) {
+// Recomputes the grid dimensions and caches them in m_grid_rows/m_grid_cols.
+// Called ONCE per rebuild from refresh_workspace_cache so that every render and
+// navigation site reads a stable size for the whole frame -- recomputing the
+// workspace count per-call let the size change underneath an open overview and
+// desynced the slot<->window mapping.
+void HTLayoutGrid::refresh_grid_dims() {
     if (!HTConfig::value<Config::INTEGER>("grid:adaptive")) {
-        rows = HTConfig::value<Config::INTEGER>("grid:rows");
-        cols = HTConfig::value<Config::INTEGER>("grid:cols");
+        m_grid_rows = std::max(1, static_cast<int>(HTConfig::value<Config::INTEGER>("grid:rows")));
+        m_grid_cols = std::max(1, static_cast<int>(HTConfig::value<Config::INTEGER>("grid:cols")));
         return;
     }
 
@@ -83,12 +88,18 @@ void HTLayoutGrid::get_grid_dims(int& rows, int& cols) {
             continue;
         n++;
     }
-    if (n < 1)
-        n = 1;
 
-    const int dim = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
-    rows = dim;
-    cols = dim;
+    // Reserve one extra slot so there is always at least one empty cell to
+    // create/drag a new workspace into. Size a compact (near-square) grid that
+    // fits n+1: e.g. 4ws -> 3x2, 9ws -> 4x3, 16ws -> 5x4.
+    const int slots = std::max(n + 1, 2);
+    m_grid_cols = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(slots))));
+    m_grid_rows = static_cast<int>(std::ceil(static_cast<double>(slots) / m_grid_cols));
+}
+
+void HTLayoutGrid::get_grid_dims(int& rows, int& cols) {
+    rows = m_grid_rows;
+    cols = m_grid_cols;
 }
 
 void HTLayoutGrid::refresh_workspace_cache(
@@ -98,6 +109,7 @@ void HTLayoutGrid::refresh_workspace_cache(
     if (monitor == nullptr)
         return;
 
+    refresh_grid_dims();
     int ROWS, COLS;
     get_grid_dims(ROWS, COLS);
     const int LAYERS = HTConfig::value<Config::INTEGER>("grid:layers");
