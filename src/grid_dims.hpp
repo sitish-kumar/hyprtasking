@@ -4,20 +4,26 @@
 
 // Pure adaptive-grid sizing (no Hyprland deps so it is unit-testable).
 //
-// Chooses a compact, near-square grid that fits `workspace_count` real
-// workspaces PLUS one spare cell, so there is always an empty slot to
-// create/drag a new workspace into.
+// Picks the smallest UNIFORM SQUARE grid (N x N) that has strictly MORE cells
+// than there are workspaces, so the leftover cell(s) are empty "+" slots for
+// creating a new workspace. N = ceil(sqrt(workspace_count + 1)).
 //
-//   n=1 -> 2x1   n=3 -> 2x2   n=4 -> 3x2   n=8 -> 3x3
-//   n=9 -> 4x3   n=15 -> 4x4  n=16 -> 5x4
+//   1-3 ws  -> 2x2 (4 cells)
+//   4-8 ws  -> 3x3 (9 cells)
+//   9-15 ws -> 4x4 (16 cells)
+//   16-24   -> 5x5 (25 cells)
+//
+// Because dims are recomputed on every overview open, the grid grows AND
+// shrinks in lock-step with the real workspaces (close enough of them and the
+// next open drops back to the smaller square).
 //
 // Invariants (verified in test/grid_dims_test.cpp):
-//   * rows >= 1 && cols >= 1
-//   * rows*cols >= n + 1            (always at least one spare cell)
-//   * cols - rows is 0 or 1         (near-square, columns-major)
-//   * cols == ceil(sqrt(n+1))       (minimal near-square fit)
+//   * rows == cols                 (uniform square)
+//   * rows*cols > workspace_count   (always at least one empty "+" cell)
+//   * rows == ceil(sqrt(n+1))       (smallest such square)
 inline void grid_dims_for_count(int workspace_count, int& rows, int& cols) {
     const int slots = std::max(workspace_count + 1, 2);
-    cols = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(slots))));
-    rows = static_cast<int>(std::ceil(static_cast<double>(slots) / cols));
+    const int n = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(slots))));
+    rows = n;
+    cols = n;
 }
