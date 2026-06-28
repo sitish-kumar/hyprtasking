@@ -766,6 +766,7 @@ static void init_config() {
     // grid specific
     addConfigValue(CIntValue, "grid:rows", "rows", 3);
     addConfigValue(CIntValue, "grid:cols", "cols", 3);
+    addConfigValue(CIntValue, "grid:adaptive", "adaptive grid sizing from workspace count", 0);
     addConfigValue(CIntValue, "grid:layers", "layers", 1);
     addConfigValue(CIntValue, "grid:loop_layers", "loop layers", 1);
     addConfigValue(CIntValue, "grid:loop", "loop", 0);
