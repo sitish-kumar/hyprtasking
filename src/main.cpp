@@ -751,6 +751,7 @@ static void init_config() {
     addConfigValue(CIntValue, "rounding", "tile corner rounding (px, 0 = square)", 12);
     addConfigValue(CIntValue, "plus_on_empty", "draw a + icon on empty/create cells", 1);
     addConfigValue(CIntValue, "focus_follows_cursor", "focus the window under the cursor in the overview", 1);
+    addConfigValue(CIntValue, "blur_bg", "blur the desktop behind the overview as background (experimental)", 0);
     addConfigValue(CIntValue, "exit_on_hovered", "exit on hovered", 0);
     addConfigValue(CIntValue, "warp_on_move_window", "warp on move window", 1);
     addConfigValue(CIntValue, "close_overview_on_reload", "close overview on reload", 1);

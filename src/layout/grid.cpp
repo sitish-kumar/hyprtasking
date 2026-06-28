@@ -442,8 +442,16 @@ void HTLayoutGrid::render() {
     CBox monitor_box = {{0, 0}, monitor->m_transformedSize};
 
     CRectPassElement::SRectData bg;
-    bg.color = CHyprColor {HTConfig::value<Config::INTEGER>("bg_color")}.stripA();
     bg.box = monitor_box;
+    if (HTConfig::value<Config::INTEGER>("blur_bg")) {
+        // Blur the desktop already in the framebuffer (the clear is skipped in
+        // HTLayoutBase::render when blur_bg is on). bg_color's alpha tints it.
+        bg.color = CHyprColor {HTConfig::value<Config::INTEGER>("bg_color")};
+        bg.blur  = true;
+        bg.blurA = 1.f;
+    } else {
+        bg.color = CHyprColor {HTConfig::value<Config::INTEGER>("bg_color")}.stripA();
+    }
     g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(bg));
 
     build_overview_layout(HT_VIEW_ANIMATING);

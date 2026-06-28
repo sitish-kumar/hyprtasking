@@ -9,6 +9,7 @@
 #include <hyprland/src/render/pass/ClearPassElement.hpp>
 #undef private
 
+#include "../config.hpp"
 #include "../globals.hpp"
 #include "../pass/pass_element.hpp"
 #include "../types.hpp"
@@ -74,6 +75,10 @@ void HTLayoutBase::build_overview_layout(HTViewStage stage) {
 }
 
 void HTLayoutBase::render() {
+    // With blur_bg on we keep the desktop in the framebuffer so the overview's
+    // background rect can blur it (see HTLayoutGrid::render). Otherwise clear.
+    if (HTConfig::value<Config::INTEGER>("blur_bg"))
+        return;
     CClearPassElement::SClearData data;
     data.color = CHyprColor {0};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CClearPassElement>(data));
