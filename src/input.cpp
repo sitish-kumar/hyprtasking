@@ -240,17 +240,23 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
         const float deltaY = OPEN_POSITIVE ? e.delta.y : -e.delta.y;
 
         if (swipe_state != HT_SWIPE_OPEN) {
-            if (swipe_direction != 'v' || cursor_view->closing) {
+            if (swipe_direction != 'v') {
                 return res;
-            } else if (!cursor_view->active && deltaY <= 0) {
+            } else if (deltaY <= 0 && (!cursor_view->active || cursor_view->closing)) {
+                // Open, or RE-open by interrupting an in-flight close animation.
+                // Previously a swipe was blocked while `closing` was true, so a
+                // quick up/down/up felt disconnected (had to wait for the close
+                // animation to finish before it would re-arm).
                 refresh_all_grid_caches();  // recompute (adaptive) dims+slots before opening
                 cursor_view->show();
                 swipe_state = HT_SWIPE_OPEN;
                 swipe_amt = OPEN_DISTANCE;
-            } else if (cursor_view->active && deltaY > 0) {
+            } else if (deltaY > 0 && cursor_view->active && !cursor_view->closing) {
                 cursor_view->hide(false);
                 swipe_state = HT_SWIPE_OPEN;
                 swipe_amt = 0.0;
+            } else {
+                return res;
             }
         }
 
