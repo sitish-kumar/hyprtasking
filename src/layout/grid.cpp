@@ -81,18 +81,21 @@ void HTLayoutGrid::refresh_grid_dims() {
         return;
     }
 
-    int n = 0;
+    // Size to the HIGHEST workspace number on this monitor so workspace N lands
+    // on cell N (numbered layout), plus a spare "+" cell. Square. So moving a
+    // window to workspace 9 grows the grid to 4x4 even if only a few exist.
+    int max_id = 0;
     for (const auto& w : g_pCompositor->getWorkspacesCopy()) {
         if (w == nullptr || w->m_id <= 0)
             continue;
         if (w->monitorID() != view_id)
             continue;
-        n++;
+        max_id = std::max(max_id, static_cast<int>(w->m_id));
     }
 
-    // Compact near-square grid that fits n+1 (one spare cell). Pure helper is
-    // unit-tested in test/grid_dims_test.cpp.
-    grid_dims_for_count(n, m_grid_rows, m_grid_cols);
+    // grid_dims_for_count(X) returns the smallest square fitting X+1; passing
+    // max_id makes a workspace numbered max_id fit with a trailing spare cell.
+    grid_dims_for_count(max_id, m_grid_rows, m_grid_cols);
 }
 
 void HTLayoutGrid::get_grid_dims(int& rows, int& cols) {
@@ -103,6 +106,7 @@ void HTLayoutGrid::get_grid_dims(int& rows, int& cols) {
 void HTLayoutGrid::refresh_workspace_cache(
     const std::unordered_set<WORKSPACEID>& extra_off_limits
 ) {
+    (void)extra_off_limits;  // numbered layout is deterministic; no cross-grid dedup needed
     const PHLMONITOR monitor = get_monitor();
     if (monitor == nullptr)
         return;
@@ -114,156 +118,22 @@ void HTLayoutGrid::refresh_workspace_cache(
     if (ROWS <= 0 || COLS <= 0 || LAYERS <= 0)
         return;
 
-    const auto prior = ws_slot_cache;
-
     ws_slot_cache.clear();
     slot_ws_cache.clear();
 
-    std::vector<HTGridSlot> slots;
-    slots.reserve((size_t)LAYERS * ROWS * COLS);
-    for (int l = 0; l < LAYERS; l++)
-        for (int y = 0; y < ROWS; y++)
-            for (int x = 0; x < COLS; x++)
-                slots.push_back(HTGridSlot {l, x, y});
-
-    std::vector<bool> taken(slots.size(), false);
-
-    auto place = [&](WORKSPACEID id, size_t slot_idx) {
-        const HTGridSlot& s = slots[slot_idx];
-        ws_slot_cache[id] = s;
+    // Numbered layout: cell index i holds workspace (i+1), row-major. Real
+    // workspaces land on their own numbered cell (ws 9 -> cell 9); every other
+    // cell is a synthetic workspace that is clickable to create/switch to that
+    // number. Deterministic, so it stays stable across refreshes without any
+    // prior-slot bookkeeping.
+    const int    per_layer    = ROWS * COLS;
+    const size_t total_slots  = static_cast<size_t>(LAYERS) * per_layer;
+    for (size_t i = 0; i < total_slots; i++) {
+        const int        rem = static_cast<int>(i % per_layer);
+        const HTGridSlot s {static_cast<int>(i / per_layer), rem % COLS, rem / COLS};
+        const WORKSPACEID id = static_cast<WORKSPACEID>(i + 1);
+        ws_slot_cache[id]                            = s;
         slot_ws_cache[pack_slot(s.layer, s.x, s.y)] = id;
-        taken[slot_idx] = true;
-    };
-
-    auto find_slot_index = [&](const HTGridSlot& s) -> long long {
-        for (size_t i = 0; i < slots.size(); i++)
-            if (slots[i].layer == s.layer && slots[i].x == s.x && slots[i].y == s.y)
-                return (long long)i;
-        return -1;
-    };
-
-    auto next_free_slot = [&](size_t& cursor) -> long long {
-        while (cursor < slots.size() && taken[cursor])
-            cursor++;
-        if (cursor >= slots.size())
-            return -1;
-        return (long long)cursor;
-    };
-
-    auto place_with_prior = [&](WORKSPACEID id, size_t& cursor) -> bool {
-        if (ws_slot_cache.count(id))
-            return false;
-        const auto pit = prior.find(id);
-        if (pit != prior.end()) {
-            const long long idx = find_slot_index(pit->second);
-            if (idx >= 0 && !taken[(size_t)idx]) {
-                place(id, (size_t)idx);
-                return true;
-            }
-        }
-        const long long idx = next_free_slot(cursor);
-        if (idx < 0)
-            return false;
-        place(id, (size_t)idx);
-        return true;
-    };
-
-    // No two grids may map the same WORKSPACEID, else dragging into a slot
-    // could silently switch monitors. extra_off_limits carries IDs already
-    // claimed by sibling views in this refresh.
-    std::unordered_set<WORKSPACEID> off_limits = extra_off_limits;
-    const auto& ws_manager = Config::workspaceRuleMgr();
-    const auto& all_rules = ws_manager->getAllWorkspaceRules();
-    for (const auto& rule : all_rules) {
-        if (rule.m_workspaceId > 0)
-            off_limits.insert(rule.m_workspaceId);
-    }
-    for (const auto& w : g_pCompositor->getWorkspacesCopy()) {
-        if (w == nullptr)
-            continue;
-        if (w->monitorID() != view_id)
-            off_limits.insert(w->m_id);
-    }
-
-    size_t cursor = 0;
-
-    // Sort by workspaceId so slot assignment doesn't depend on config-line order.
-    std::vector<const Config::CWorkspaceRule*> rules_sorted;
-    rules_sorted.reserve(all_rules.size());
-    for (const auto& r : all_rules)
-        rules_sorted.push_back(&r);
-    std::sort(rules_sorted.begin(), rules_sorted.end(),
-              [](const Config::CWorkspaceRule* a, const Config::CWorkspaceRule* b) {
-                  return a->m_workspaceId < b->m_workspaceId;
-              });
-
-    for (const Config::CWorkspaceRule* rule : rules_sorted) {
-        if (rule->m_workspaceId <= 0)
-            continue;
-        if (extra_off_limits.count(rule->m_workspaceId))
-            continue;
-        const auto bound = Config::workspaceRuleMgr()->getBoundMonitorForWS(
-            rule->m_workspaceName.starts_with("name:")
-                ? rule->m_workspaceName.substr(5)
-                : rule->m_workspaceName
-        );
-        if (bound == nullptr || bound->m_id != view_id)
-            continue;
-        place_with_prior(rule->m_workspaceId, cursor);
-    }
-
-    // Sort by m_id so slot assignment is independent of Hyprland's internal
-    // m_workspaces vector order.
-    std::vector<PHLWORKSPACE> on_monitor;
-    for (const auto& w : g_pCompositor->getWorkspacesCopy()) {
-        if (w == nullptr)
-            continue;
-        if (w->monitorID() != view_id)
-            continue;
-        if (w->m_id <= 0)
-            continue;
-        if (extra_off_limits.count(w->m_id))
-            continue;
-        on_monitor.push_back(w);
-    }
-    std::sort(on_monitor.begin(), on_monitor.end(),
-              [](const PHLWORKSPACE& a, const PHLWORKSPACE& b) {
-                  return a->m_id < b->m_id;
-              });
-    // Settle workspaces that still have a free prior slot before assigning
-    // anyone via the cursor — otherwise a migrated workspace with no prior
-    // here would steal slot 0 and displace this monitor's resident at (0,0).
-    std::vector<PHLWORKSPACE> needs_cursor;
-    for (const auto& w : on_monitor) {
-        const auto pit = prior.find(w->m_id);
-        if (pit != prior.end()) {
-            const long long idx = find_slot_index(pit->second);
-            if (idx >= 0 && !taken[(size_t)idx]) {
-                place(w->m_id, (size_t)idx);
-                continue;
-            }
-        }
-        needs_cursor.push_back(w);
-    }
-    for (const auto& w : needs_cursor)
-        place_with_prior(w->m_id, cursor);
-
-    WORKSPACEID synth_candidate = 1;
-    auto next_synth = [&]() -> WORKSPACEID {
-        while (true) {
-            if (off_limits.count(synth_candidate) || ws_slot_cache.count(synth_candidate)) {
-                synth_candidate++;
-                continue;
-            }
-            return synth_candidate++;
-        }
-    };
-
-    for (size_t i = 0; i < slots.size(); i++) {
-        if (taken[i])
-            continue;
-        const WORKSPACEID id = next_synth();
-        place(id, i);
     }
 }
 
