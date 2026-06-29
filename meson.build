@@ -19,7 +19,10 @@ add_project_arguments(
   ],
   language: 'cpp')
 
-globber = run_command('find', '.', '-name', '*.cpp', check: true)
+# Only the plugin sources under src/. Globbing '.' also swept in test/*.cpp (which
+# carry their own main()), compiling them into libhyprtasking.so and colliding with
+# meson's sanity-check main(). Tests build standalone (see test/grid_dims_test.cpp header).
+globber = run_command('find', 'src', '-name', '*.cpp', check: true)
 src = globber.stdout().strip().split('\n')
 
 incdir = []
