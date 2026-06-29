@@ -489,14 +489,21 @@ void HTLayoutGrid::render() {
         g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(bdata));
     }
 
-    // workspace may be nullptr for empty/never-visited slots: render_workspace_at_box
-    // still draws their background + wallpaper layers so the tile isn't blank. Render
-    // the active workspace last so its windows (e.g. one just dropped) stay on top of
-    // the neighbouring tiles.
+    // Render every existing workspace into its tile. Empty/never-visited slots
+    // (getWorkspaceByID == nullptr) are SKIPPED: passing nullptr to the original
+    // renderWorkspace leaves the monitor's active workspace unchanged, so it would
+    // draw the ACTIVE workspace's windows into the empty tile — i.e. the same window
+    // duplicated across every empty cell (and it shifted as focus-follows-cursor
+    // changed the active ws). The "+" overlay below marks those empty cells instead.
+    // Render the active workspace last so its windows (e.g. one just dropped) stay on
+    // top of neighbouring tiles.
     for (const auto& [ws_id, ws_layout] : overview_layout) {
         if (!tile_visible(ws_layout.box) || ws_id == start_workspace->m_id)
             continue;
-        render_workspace_at_box(monitor, g_pCompositor->getWorkspaceByID(ws_id), time, ws_layout.box);
+        const auto ws = g_pCompositor->getWorkspaceByID(ws_id);
+        if (ws == nullptr)
+            continue;  // empty/never-visited slot: no windows (the "+" overlay marks it)
+        render_workspace_at_box(monitor, ws, time, ws_layout.box);
     }
     if (const auto it = overview_layout.find(start_workspace->m_id);
         it != overview_layout.end() && tile_visible(it->second.box))

@@ -70,6 +70,15 @@ void HTView::do_exit_behavior(bool exit_on_mouse) {
         return;
 
     monitor->changeWorkspace(workspace);
+
+    // Focus-follows-cursor, applied here (on close) instead of live on every mouse-move
+    // (which switched the active workspace per move and flickered). The hovered
+    // workspace is now active, so focusing the hovered window in it adds no extra switch.
+    if (HTConfig::value<Config::INTEGER>("focus_follows_cursor")) {
+        const PHLWINDOW hovered = ht_manager->get_window_from_cursor(false);
+        if (hovered != nullptr)
+            Desktop::focusState()->fullWindowFocus(hovered, Desktop::FOCUS_REASON_CLICK);
+    }
 }
 
 void HTView::show(bool recalculate) {

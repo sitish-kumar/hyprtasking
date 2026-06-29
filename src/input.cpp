@@ -195,21 +195,12 @@ bool HTManager::exit_to_workspace() {
 }
 
 bool HTManager::on_mouse_move() {
-    // Focus-follows-cursor (#3): while the overview is open, focus the window
-    // under the cursor so it reads as active and a later close lands on it.
-    if (!HTConfig::value<Config::INTEGER>("focus_follows_cursor"))
-        return false;
-
-    const PHTVIEW cursor_view = get_view_from_cursor();
-    if (cursor_view == nullptr || !cursor_view->active || cursor_view->closing)
-        return false;
-    if (!cursor_view->layout->should_manage_mouse())
-        return false;
-
-    const PHLWINDOW hovered = get_window_from_cursor(false);
-    if (hovered != nullptr && hovered != Desktop::focusState()->window())
-        Desktop::focusState()->fullWindowFocus(hovered, Desktop::FOCUS_REASON_FFM);
-
+    // Focus-follows-cursor (#3) is applied ON CLOSE, not live: focusing the hovered
+    // window every mouse-move switches the active workspace (Hyprland can't focus a
+    // window on a non-active workspace without activating it), which makes that tile
+    // re-render on top -> the "overlay/preview appearing and disappearing" flicker.
+    // do_exit_behavior() now focuses the exact hovered window when the overview closes,
+    // so the close still lands on whatever you're pointing at, with zero live churn.
     return false;  // never cancel the motion event
 }
 

@@ -73,21 +73,27 @@ PHLWINDOW HTManager::get_window_from_cursor(bool return_focused) {
     if (hovered_workspace == nullptr)
         return nullptr;
 
-    const Vector2D ws_coords = cursor_view->layout->global_to_local_ws_unscaled(mouse_coords, ws_id)
-        + cursor_monitor->m_position;
+    // Hit-test the hovered workspace's windows directly, in scaled overview space.
+    // The old approach did changeWorkspace(hovered) -> vectorToWindowUnified ->
+    // changeWorkspace(back), which briefly made the hovered workspace ACTIVE, so its
+    // window flashed at full/maximized size for a frame (the cursor "appearing/
+    // disappearing" flicker, and windows reacting at maximized size while minimized).
+    // get_global_window_box() gives each window's box in the same global coordinate
+    // space as the cursor, so a plain geometric test avoids all of that.
+    // Topmost wins: floating beats tiled; within the same kind, later-in-list is higher.
+    PHLWINDOW best = nullptr;
+    for (const auto& w : g_pCompositor->m_windows) {
+        if (w == nullptr || !w->m_isMapped || w->isHidden())
+            continue;
+        if (w->m_workspace != hovered_workspace)
+            continue;
+        if (!cursor_view->layout->get_global_window_box(w, ws_id).containsPoint(mouse_coords))
+            continue;
+        if (best == nullptr || w->m_isFloating || w->m_isFloating == best->m_isFloating)
+            best = w;
+    }
 
-    const PHLWORKSPACEREF o_workspace = cursor_monitor->m_activeWorkspace;
-    cursor_monitor->changeWorkspace(hovered_workspace, true);
-
-    const PHLWINDOW hovered_window = g_pCompositor->vectorToWindowUnified(
-        ws_coords,
-        Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING
-    );
-
-    if (o_workspace != nullptr)
-        cursor_monitor->changeWorkspace(o_workspace.lock(), true);
-
-    return hovered_window;
+    return best;
 }
 
 void HTManager::show_all_views() {
