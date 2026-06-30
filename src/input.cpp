@@ -7,6 +7,7 @@
 #include <hyprland/src/managers/PointerManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/managers/input/UnifiedWorkspaceSwipeGesture.hpp>
 
 #include "config.hpp"
 #include "manager.hpp"
@@ -215,17 +216,19 @@ bool HTManager::on_mouse_axis(double delta) {
 void HTManager::swipe_start() {
     swipe_state = HT_SWIPE_NONE;
     swipe_amt = 0.0;
+    switch_accum = 0.0;
 }
 
 bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
-    const PHLMONITOR cursor_monitor = g_pCompositor->getMonitorFromCursor();
-    const PHTVIEW cursor_view = get_view_from_monitor(cursor_monitor);
-    if (cursor_view == nullptr)
-        return false;
-
     const int ENABLED = HTConfig::value<Config::INTEGER>("gestures:enabled");
     if (!ENABLED)
         return false;
+
+    // NOTE: cursor_view is created lazily (first overview open). The 4-finger horizontal
+    // workspace switch below must work without it, so we do NOT bail on a null view here;
+    // the overview-only gestures get a null guard further down instead.
+    const PHLMONITOR cursor_monitor = g_pCompositor->getMonitorFromCursor();
+    const PHTVIEW cursor_view = get_view_from_monitor(cursor_monitor);
 
     const unsigned int MOVE_FINGERS = HTConfig::value<Config::INTEGER>("gestures:move_fingers");
     const float OPEN_DISTANCE = HTConfig::value<Config::FLOAT>("gestures:open_distance");
@@ -240,61 +243,110 @@ bool HTManager::swipe_update(IPointer::SSwipeUpdateEvent e) {
         swipe_direction = 'v';
     }
 
-    if (e.fingers == OPEN_FINGERS) {
-        if (cursor_view->active || swipe_state == HT_SWIPE_OPEN)
-            res = true;
+    // Continue an already-committed gesture, regardless of the CURRENT finger count.
+    // A hand naturally adds/drops a finger mid-swipe; that must never hand a half-done
+    // gesture to a different mode's handler. (Feeding a swipe-started gesture a changed
+    // event is exactly the kind of mid-gesture mode switch that crashed the native
+    // path.) Once a gesture commits to a mode, it sticks until swipe_end().
+    if (swipe_state == HT_SWIPE_SWITCH) {
+        switch_accum += e.delta.x;
+        // Feed Hyprland's native workspace-swipe engine live (absolute accumulated
+        // delta). Negated so content follows the finger (swipe right -> the workspace to
+        // the left slides in). Flip the sign of switch_accum here to reverse direction.
+        g_pUnifiedWorkspaceSwipe->update(-switch_accum);
+        return true;
+    }
+    // Start a 4-finger HORIZONTAL workspace switch via Hyprland's native swipe engine.
+    // Handled here, before the cursor_view null guard, because it needs no overview view
+    // — otherwise it wouldn't work until the overview had been opened once (the bug where
+    // the swipe was dead on first use after a reload).
+    if (swipe_state == HT_SWIPE_NONE && e.fingers == OPEN_FINGERS && swipe_direction == 'h'
+        && (cursor_view == nullptr || !cursor_view->active)) {
+        // 3-finger guard rail: don't hijack a 3-finger move that's still animating.
+        if (cursor_view != nullptr && cursor_view->navigating && (int)e.fingers != committed_fingers)
+            return false;
+        g_pUnifiedWorkspaceSwipe->begin();
+        swipe_state = HT_SWIPE_SWITCH;
+        switch_accum = e.delta.x;
+        committed_fingers = e.fingers;
+        g_pUnifiedWorkspaceSwipe->update(-switch_accum);
+        return true;
+    }
 
+    // The remaining gestures (overview open/close, 3-finger grid navigation) operate on
+    // the hyprtasking view, so they need one.
+    if (cursor_view == nullptr)
+        return false;
+
+    if (swipe_state == HT_SWIPE_MOVE) {
+        cursor_view->layout->on_move_swipe(e.delta);
+        return true;
+    }
+    if (swipe_state == HT_SWIPE_OPEN) {
+        const float deltaY = OPEN_POSITIVE ? e.delta.y : -e.delta.y;
+        swipe_amt += deltaY;
+        const float swipe_perc = 1.0 - std::clamp(swipe_amt / OPEN_DISTANCE, 0.01f, 1.0f);
+        cursor_view->layout->close_open_lerp(swipe_perc);
+        return true;
+    }
+
+    // 3-finger guard rail. While a 3-finger move's navigation animation is still
+    // settling (navigating == true), a brushed extra finger makes libinput CANCEL the
+    // 3-finger swipe and BEGIN a fresh gesture with a different finger count. Starting a
+    // new action now (open overview / switch workspace) would corrupt the in-flight
+    // navigation, so ignore any new gesture whose finger count differs from the one that
+    // is animating. Chained same-count swipes (3 -> 3) are still allowed through.
+    if (cursor_view->navigating && (int)e.fingers != committed_fingers)
+        return false;
+
+    // No gesture committed yet (swipe_state == HT_SWIPE_NONE): choose the mode from the
+    // finger count + dominant direction. The chosen mode then locks in (see above).
+    if (e.fingers == OPEN_FINGERS) {
+        res = cursor_view->active; // matches old behavior: consume only when overview up
         const float deltaY = OPEN_POSITIVE ? e.delta.y : -e.delta.y;
 
-        if (swipe_state != HT_SWIPE_OPEN) {
-            if (swipe_direction != 'v') {
-                return res;
-            } else if (deltaY <= 0 && (!cursor_view->active || cursor_view->closing)) {
-                // Open, or RE-open by interrupting an in-flight close animation.
-                // Previously a swipe was blocked while `closing` was true, so a
-                // quick up/down/up felt disconnected (had to wait for the close
-                // animation to finish before it would re-arm).
-                refresh_all_grid_caches();  // recompute (adaptive) dims+slots before opening
-                cursor_view->show();
-                swipe_state = HT_SWIPE_OPEN;
-                swipe_amt = OPEN_DISTANCE;
-            } else if (deltaY > 0 && cursor_view->active && !cursor_view->closing) {
-                cursor_view->hide(false);
-                swipe_state = HT_SWIPE_OPEN;
-                swipe_amt = 0.0;
-            } else {
-                return res;
-            }
+        if (swipe_direction == 'h') {
+            // Horizontal 4-finger reaches here only when the overview is open (the closed
+            // case starts the native workspace switch above, before the view guard).
+            // Leave it to the overview instead of switching workspaces underneath it.
+            return res;
         }
+        if (swipe_direction != 'v')
+            return res; // direction still ambiguous; wait for a clearer delta
 
-        if (swipe_state == HT_SWIPE_OPEN) {
-            swipe_amt += deltaY;
-            const float swipe_perc = 1.0 - std::clamp(swipe_amt / OPEN_DISTANCE, 0.01f, 1.0f);
-            cursor_view->layout->close_open_lerp(swipe_perc);
+        // 4-finger VERTICAL: open / close the overview (workspace manager).
+        if (deltaY <= 0 && (!cursor_view->active || cursor_view->closing)) {
+            // Open, or RE-open by interrupting an in-flight close animation.
+            refresh_all_grid_caches();  // recompute (adaptive) dims+slots before opening
+            cursor_view->show();
+            swipe_state = HT_SWIPE_OPEN;
+            swipe_amt = OPEN_DISTANCE;
+        } else if (deltaY > 0 && cursor_view->active && !cursor_view->closing) {
+            cursor_view->hide(false);
+            swipe_state = HT_SWIPE_OPEN;
+            swipe_amt = 0.0;
+        } else {
+            return res;
         }
+        committed_fingers = e.fingers;
+
+        swipe_amt += deltaY;
+        const float swipe_perc = 1.0 - std::clamp(swipe_amt / OPEN_DISTANCE, 0.01f, 1.0f);
+        cursor_view->layout->close_open_lerp(swipe_perc);
+        return res;
     } else if (e.fingers == MOVE_FINGERS) {
-        if (swipe_state == HT_SWIPE_MOVE)
-            res = true;
-
-        if (swipe_state != HT_SWIPE_MOVE) {
-            if (cursor_view->active) {
-                return res;
-            } else {
-                swipe_state = HT_SWIPE_MOVE;
-                cursor_view->navigating = true;
-
-                cursor_view->layout->init_position();
-                // need to schedule frames for monitor, otherwise the screen doesn't re-render
-                g_pHyprRenderer->damageMonitor(cursor_monitor);
-                g_pCompositor->scheduleFrameForMonitor(cursor_monitor);
-            }
-        }
-
-        if (swipe_state == HT_SWIPE_MOVE) {
-            res = true;  // consume from the very first update so a native
-                         // workspace-swipe can't also fire and snap us
-            cursor_view->layout->on_move_swipe(e.delta);
-        }
+        // 3-finger: navigate the overview grid.
+        if (cursor_view->active)
+            return false;
+        swipe_state = HT_SWIPE_MOVE;
+        committed_fingers = e.fingers;
+        cursor_view->navigating = true;
+        cursor_view->layout->init_position();
+        // need to schedule frames for monitor, otherwise the screen doesn't re-render
+        g_pHyprRenderer->damageMonitor(cursor_monitor);
+        g_pCompositor->scheduleFrameForMonitor(cursor_monitor);
+        cursor_view->layout->on_move_swipe(e.delta);
+        return true;
     }
     return res;
 }
@@ -320,11 +372,18 @@ bool HTManager::swipe_end() {
             cursor_view->move_id(ws_id, false);
             break;
         }
+        case HT_SWIPE_SWITCH: {
+            // 4-finger horizontal: let the native engine commit (it applies
+            // workspace_swipe_cancel_ratio / min_speed_to_force and snaps or reverts).
+            g_pUnifiedWorkspaceSwipe->end();
+            break;
+        }
         case HT_SWIPE_NONE:
             break;
     }
 
     swipe_state = HT_SWIPE_NONE;
     swipe_amt = 0.0;
+    switch_accum = 0.0;
     return true;
 }

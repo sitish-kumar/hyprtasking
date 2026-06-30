@@ -35,11 +35,26 @@ class HTManager {
     enum swipe_state_t {
         HT_SWIPE_OPEN,
         HT_SWIPE_MOVE,
+        HT_SWIPE_SWITCH,
         HT_SWIPE_NONE,
     };
 
     swipe_state_t swipe_state;
     float swipe_amt;
+    // 4-finger horizontal "switch workspace" gesture: a safe replacement for the native
+    // workspace swipe, which crashes Hyprland 0.55.4 (a pinch gets routed into
+    // CWorkspaceSwipeGesture::update and null-derefs e.swipe). This is a plain
+    // next/prev workspace switch (Hyprland animates the window slide) routed through
+    // hyprtasking's swipe path (no CTrackpadGestures) — NOT the overview grid pan.
+    // switch_accum sums horizontal delta; on release we commit if it passed a threshold.
+    double switch_accum = 0.0;
+    // Finger count of the gesture that last committed to a mode. Used as a guard rail:
+    // while a 3-finger move's animation is still settling (cursor_view->navigating), a
+    // brushed extra finger makes libinput cancel the 3-finger swipe and begin a new one
+    // with a different finger count — we ignore that so it can't corrupt the in-flight
+    // navigation (open the overview / switch workspace). Chained same-count swipes still
+    // work. NOT reset in swipe_start (must survive the cancel+rebegin).
+    int committed_fingers = 0;
     void swipe_start();
     bool swipe_update(IPointer::SSwipeUpdateEvent e);
     bool swipe_end();
