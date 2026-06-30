@@ -298,6 +298,16 @@ bool HTLayoutGrid::should_render_window(PHLWINDOW window) {
     if (window_box.intersection(monitor->logicalBox()).empty())
         return false;
 
+    // Each tile is rendered with monitor->m_activeWorkspace pointed at that tile's
+    // workspace (render_workspace_at_box), and only that workspace's own windows belong
+    // in it. Hyprland's shouldRenderWindow (ori_result) also returns true for a window
+    // whose workspace is mid-animation (renderOffset/alpha), pinned, or being moved --
+    // and the overview animates every workspace as it opens/closes, so without this
+    // guard such a window bleeds into whatever tile is currently drawing, appearing as a
+    // duplicate preview of an app that actually lives on another workspace.
+    if (monitor->m_activeWorkspace == nullptr || workspace != monitor->m_activeWorkspace)
+        return false;
+
     return ori_result;
 }
 
@@ -489,21 +499,17 @@ void HTLayoutGrid::render() {
         g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(bdata));
     }
 
-    // Render every existing workspace into its tile. Empty/never-visited slots
-    // (getWorkspaceByID == nullptr) are SKIPPED: passing nullptr to the original
-    // renderWorkspace leaves the monitor's active workspace unchanged, so it would
-    // draw the ACTIVE workspace's windows into the empty tile — i.e. the same window
-    // duplicated across every empty cell (and it shifted as focus-follows-cursor
-    // changed the active ws). The "+" overlay below marks those empty cells instead.
-    // Render the active workspace last so its windows (e.g. one just dropped) stay on
-    // top of neighbouring tiles.
+    // Render every cell into its tile. Empty/never-visited slots (getWorkspaceByID ==
+    // nullptr) are rendered with a nullptr workspace too: renderWorkspace -> the
+    // !pWorkspace branch of renderAllClientsForWorkspace draws only the monitor's
+    // background + wallpaper layers (NO windows) into the tile, so an empty cell shows
+    // the wallpaper instead of a black rectangle. The "+" overlay is drawn on top
+    // afterwards. Render the active workspace last so its windows (e.g. one just
+    // dropped) stay on top of neighbouring tiles.
     for (const auto& [ws_id, ws_layout] : overview_layout) {
         if (!tile_visible(ws_layout.box) || ws_id == start_workspace->m_id)
             continue;
-        const auto ws = g_pCompositor->getWorkspaceByID(ws_id);
-        if (ws == nullptr)
-            continue;  // empty/never-visited slot: no windows (the "+" overlay marks it)
-        render_workspace_at_box(monitor, ws, time, ws_layout.box);
+        render_workspace_at_box(monitor, g_pCompositor->getWorkspaceByID(ws_id), time, ws_layout.box);
     }
     if (const auto it = overview_layout.find(start_workspace->m_id);
         it != overview_layout.end() && tile_visible(it->second.box))
